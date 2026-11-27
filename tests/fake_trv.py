@@ -37,6 +37,8 @@ class FakeTrv:
     calls: list[tuple[str, str, dict]] = field(default_factory=list)
     lose_days: set[int] = field(default_factory=set)
     """Weekdays for which a write does not change the state (lost write)."""
+    late_days: set[int] = field(default_factory=set)
+    """Weekdays for which the state changes a moment after the write."""
 
     def set_available(self, available: bool) -> None:
         state = "heat" if available else "unavailable"
@@ -97,7 +99,9 @@ def _register_services(hass: HomeAssistant, trvs: list[FakeTrv]) -> None:
         trv.calls.append((call.domain, call.service, data))
         if call.domain == "text":
             weekday = trv.day_entities.index(entity_id)
-            if weekday not in trv.lose_days:
+            if weekday in trv.late_days:
+                hass.loop.call_soon(trv.set_day, weekday, call.data["value"])
+            elif weekday not in trv.lose_days:
                 trv.set_day(weekday, call.data["value"])
         elif call.domain == "select":
             trv.set_mode(call.data["option"])
