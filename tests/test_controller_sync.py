@@ -241,6 +241,7 @@ async def test_offline_trv_pending_then_single_sync(hass: HomeAssistant) -> None
 
     # A new state of an available thermostat does not start a new sync.
     trv.clear_calls()
+    trv.set_source("schedule")
     trv.set_setpoint(19)
     await settle(hass)
     assert trv.calls == []

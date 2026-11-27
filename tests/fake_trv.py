@@ -37,6 +37,8 @@ class FakeTrv:
     calls: list[tuple[str, str, dict]] = field(default_factory=list)
     lose_days: set[int] = field(default_factory=set)
     """Weekdays for which a write does not change the state (lost write)."""
+    source_on_write: bool = True
+    """False: a setpoint write does not change the change source (late report)."""
     late_days: set[int] = field(default_factory=set)
     """Weekdays for which the state changes a moment after the write."""
 
@@ -57,6 +59,10 @@ class FakeTrv:
         self.hass.states.async_set(
             self.climate, state.state, {**state.attributes, ATTR_TEMPERATURE: temp}
         )
+
+    def turn_knob(self, temp: float) -> None:
+        self.set_source("manual")
+        self.set_setpoint(temp)
 
     def set_day(self, weekday: int, text: str) -> None:
         self.hass.states.async_set(self.day_entities[weekday], text)
@@ -107,7 +113,8 @@ def _register_services(hass: HomeAssistant, trvs: list[FakeTrv]) -> None:
             trv.set_mode(call.data["option"])
         elif call.domain == "climate":
             trv.set_setpoint(call.data[ATTR_TEMPERATURE])
-            trv.set_source("externally")
+            if trv.source_on_write:
+                trv.set_source("externally")
 
     for domain, service in (
         ("text", "set_value"),
