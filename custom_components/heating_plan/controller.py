@@ -185,6 +185,20 @@ class RoomController:
             home.options.min_temp,
         )
 
+    def plan_temp_now(self) -> float | None:
+        """The plan target now without calendar temperature and pause rules."""
+        home = self.home
+        rules = [r for r in home.rules if r.profile is not None]
+        return target_at(
+            self.plan,
+            self.name,
+            dt_util.utcnow(),
+            rules,
+            home.holidays,
+            home.holiday_profile,
+            home.options.min_temp,
+        )
+
     # --- life cycle -------------------------------------------------------
 
     async def start(self) -> None:

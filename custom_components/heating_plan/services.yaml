@@ -1,0 +1,66 @@
+set_override:
+  fields:
+    entity_id:
+      required: true
+      selector:
+        entity:
+          integration: heating_plan
+          domain: climate
+          multiple: true
+    temperature:
+      required: false
+      selector:
+        number:
+          min: 5
+          max: 30
+          step: 0.5
+          unit_of_measurement: "°C"
+          mode: box
+    mode:
+      required: false
+      default: timed
+      selector:
+        select:
+          translation_key: override_mode
+          options:
+            - timed
+            - until_next
+            - until_cancel
+    hours:
+      required: false
+      selector:
+        number:
+          min: 0.5
+          max: 168
+          step: 0.5
+          unit_of_measurement: h
+          mode: box
+
+cancel_override:
+  fields:
+    entity_id:
+      required: false
+      selector:
+        entity:
+          integration: heating_plan
+          domain: climate
+          multiple: true
+
+set_plan:
+  fields:
+    entity_id:
+      required: true
+      selector:
+        entity:
+          integration: heating_plan
+          domain: climate
+    profiles:
+      required: true
+      example: '{"Praca": "06:00/21 08:00/18 16:00/21 22:00/17", "Wolne": "07:30/21 23:00/17"}'
+      selector:
+        object:
+    week:
+      required: true
+      example: '["Praca", "Praca", "Praca", "Praca", "Praca", "Wolne", "Wolne"]'
+      selector:
+        object:
