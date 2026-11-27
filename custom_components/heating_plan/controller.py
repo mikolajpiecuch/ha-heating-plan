@@ -17,10 +17,19 @@ import logging
 from typing import Any, Literal
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
-from homeassistant.core import CALLBACK_TYPE, Event, EventStateChangedData, HomeAssistant, callback
+from homeassistant.const import ATTR_TEMPERATURE, STATE_UNAVAILABLE, STATE_UNKNOWN
+from homeassistant.core import (
+    CALLBACK_TYPE,
+    Event,
+    EventStateChangedData,
+    HomeAssistant,
+    State,
+    callback,
+)
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.event import (
+    async_call_later,
+    async_track_point_in_utc_time,
     async_track_state_change_event,
     async_track_time_change,
     async_track_time_interval,
@@ -30,10 +39,32 @@ from homeassistant.util import dt as dt_util
 
 from .calendar_rules import CalendarRule, parse_event
 from .const import HOLIDAY_COUNTRY, Options, RoomConfig
-from .model import DayProfile, PlanError, RoomPlan
-from .resolver import device_week, local_datetime, target_at
+from .model import (
+    MAX_TEMP,
+    DayProfile,
+    Override,
+    OverrideKind,
+    OverrideSource,
+    PlanError,
+    RoomPlan,
+    round_temp,
+)
+from .resolver import (
+    active_rule,
+    device_week,
+    local_datetime,
+    next_change as resolver_next_change,
+    target_at,
+)
 from .store import PlanStore, StoreData
-from .trv import DAYS, MODE_SCHEDULE, BoschTrv
+from .trv import (
+    DAYS,
+    MODE_MANUAL,
+    MODE_PAUSE,
+    MODE_SCHEDULE,
+    SOURCE_MANUAL,
+    BoschTrv,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -43,7 +74,18 @@ READBACK_TIMEOUT_PER_DAY = 30.0
 CALENDAR_INTERVAL = timedelta(minutes=15)
 CALENDAR_DAYS = 8
 
+OWN_WRITE_WINDOW = timedelta(seconds=60)
+"""After an own write in this time, a setpoint report alone is not a knob turn:
+an equal setpoint after an own setpoint write, and any setpoint after an own
+change to schedule or pause (the thermostat then sets the setpoint itself)."""
+KNOB_DELAY = 2.0
+"""Seconds to wait after a knob report; then the state is read again."""
+
 SyncState = Literal["synced", "pending", "error"]
+
+
+def _clamp(temp: float, min_temp: float) -> float:
+    return min(max(temp, min_temp), MAX_TEMP)
 
 
 def _same_day(text: str, profile: DayProfile) -> bool:
@@ -90,6 +132,12 @@ class RoomController:
         self._sync_again = False
         self._sync_task: asyncio.Task | None = None
         self._failed_week: dict[int, str] | None = None
+        self._apply_lock = asyncio.Lock()
+        self._own_setpoint: tuple[float, datetime] | None = None
+        self._own_mode_until: datetime | None = None
+        self._knob_timer: CALLBACK_TYPE | None = None
+        self._override_timer: CALLBACK_TYPE | None = None
+        self._rule_timer: CALLBACK_TYPE | None = None
         self._unsubs: list[CALLBACK_TYPE] = []
         self._listeners: list[Callable[[], None]] = []
 
@@ -145,13 +193,31 @@ class RoomController:
                 self.hass, self.trv.day_entity_ids, self._day_changed
             )
         )
+        self._unsubs.append(
+            async_track_state_change_event(
+                self.hass, [self.trv.source_entity_id], self._source_changed
+            )
+        )
+        override = self.override
+        if override is not None and override.until is not None:
+            if override.until <= dt_util.utcnow():
+                # The override ended while Home Assistant was not running.
+                del self.home.data["overrides"][self.room_id]
+                await self.home.save()
+        self._schedule_override_timer()
         self._unsubs.append(async_at_started(self.hass, self._started))
 
     async def stop(self) -> None:
-        """Stop all listeners and the running sync."""
+        """Stop all listeners, timers and the running sync."""
         for unsub in self._unsubs:
             unsub()
         self._unsubs.clear()
+        for timer in (self._override_timer, self._rule_timer, self._knob_timer):
+            if timer is not None:
+                timer()
+        self._override_timer = None
+        self._rule_timer = None
+        self._knob_timer = None
         if self._sync_task is not None and not self._sync_task.done():
             self._sync_task.cancel()
 
@@ -181,6 +247,8 @@ class RoomController:
         elif was_online and not is_online:
             self.sync_state = "pending"
             self._notify()
+        elif is_online and was_online and old is not None and new is not None:
+            self._setpoint_changed(old, new)
 
     @callback
     def _day_changed(self, event: Event[EventStateChangedData]) -> None:
@@ -253,20 +321,23 @@ class RoomController:
     async def sync(self) -> None:
         """Write the days that differ, check them and set the mode."""
         async with self._lock:
-            await self._sync()
+            today_rewritten = await self._sync()
+        if self.trv.available:
+            await self.apply(today_rewritten=today_rewritten)
         self._notify()
 
-    async def _sync(self) -> None:
+    async def _sync(self) -> bool:
+        """Write and check the days. True if today was written in schedule mode."""
         if not self.trv.available:
             self.sync_state = "pending"
-            return
+            return False
         today = dt_util.now().date()
         week = self.desired_week(today)
         texts = {d: p.to_z2m() for d, p in week.items()}
         days = self._mismatched_days(week)
         if days and self.sync_state == "error" and self._failed_week == texts:
             # The same write failed before. Wait for a new plan or a reconnect.
-            return
+            return False
         today_written = today.weekday() in days
         was_schedule = self.trv.mode == MODE_SCHEDULE
 
@@ -276,7 +347,7 @@ class RoomController:
                 self._notify()
                 if not await self._write_days(days):
                     self.sync_state = "pending"
-                    return
+                    return False
                 days = await self._wait_for_days(days)
                 if days:
                     _LOGGER.info(
@@ -286,11 +357,11 @@ class RoomController:
                     )
                     if not await self._write_days(days):
                         self.sync_state = "pending"
-                        return
+                        return False
                     days = await self._wait_for_days(days)
         except HomeAssistantError as err:
             self._set_error(texts, f"Write failed: {err}")
-            return
+            return False
 
         if not days and self._mismatched_days(week):
             # Another day changed on the thermostat in the meantime.
@@ -304,16 +375,12 @@ class RoomController:
                     for d, p in days.items()
                 ),
             )
-            return
+            return False
 
         self.sync_state = "synced"
         self.last_error = None
         self._failed_week = None
-        try:
-            await self._apply(today_written and was_schedule)
-        except HomeAssistantError as err:
-            self.last_error = f"Mode change failed: {err}"
-            _LOGGER.warning("%s: %s", self.name, self.last_error)
+        return today_written and was_schedule
 
     def _set_error(self, texts: dict[int, str], message: str) -> None:
         self.sync_state = "error"
@@ -321,20 +388,279 @@ class RoomController:
         self._failed_week = texts
         _LOGGER.warning("%s: %s", self.name, message)
 
+    # --- mode and setpoint ----------------------------------------------
+
+    async def apply(self, *, today_rewritten: bool = False) -> None:
+        """Put the thermostat in the mode and setpoint that the room needs now.
+
+        Priority: override -> calendar temperature or pause rule -> plan.
+        """
+        async with self._apply_lock:
+            self._schedule_rule_timer()
+            if self.trv.available:
+                try:
+                    await self._apply(today_rewritten)
+                except HomeAssistantError as err:
+                    self.last_error = f"Mode change failed: {err}"
+                    _LOGGER.warning("%s: %s", self.name, self.last_error)
+        self._notify()
+
     async def _apply(self, today_rewritten: bool) -> None:
-        """Put the thermostat in the mode that the plan needs."""
-        target = self.target_now()
-        if self.trv.mode != MODE_SCHEDULE:
-            await self.trv.set_mode(MODE_SCHEDULE)
-            # The thermostat starts with the active point of its own plan.
-            if target is not None and self._carry_over_differs(target):
-                await self.trv.set_setpoint(target)
-        elif today_rewritten or (
-            target is not None and self._carry_over_differs(target)
-        ):
-            # A new value for the active point applies only from the next point.
-            if target is not None and target != self.trv.setpoint:
-                await self.trv.set_setpoint(target)
+        override = self.override
+        if override is not None:
+            await self._hold(override.temp)
+            return
+        rule = self.active_rule()
+        if rule is not None:
+            await self._hold(
+                None
+                if rule.off or rule.temp is None
+                else _clamp(rule.temp, self.home.options.min_temp)
+            )
+            return
+        if self.sync_state == "synced":
+            target = self.target_now()
+            if self.trv.mode != MODE_SCHEDULE:
+                await self._set_mode(MODE_SCHEDULE)
+                # The thermostat starts with the active point of its own plan.
+                if target is not None and self._carry_over_differs(target):
+                    await self._set_setpoint(target, force=True)
+            elif today_rewritten or (
+                target is not None and self._carry_over_differs(target)
+            ):
+                # A new value for the active point applies only from the next point.
+                await self._set_setpoint(target)
+            return
+        # The plan on the thermostat is not confirmed: keep the plan target by hand.
+        await self._hold(self.target_now())
+
+    async def _hold(self, temp: float | None) -> None:
+        """Manual mode with a setpoint, or pause for None."""
+        if temp is None:
+            if self.trv.mode != MODE_PAUSE:
+                await self._set_mode(MODE_PAUSE)
+            return
+        if self.trv.mode != MODE_MANUAL:
+            await self._set_mode(MODE_MANUAL)
+        await self._set_setpoint(temp)
+
+    async def _set_mode(self, mode: str) -> None:
+        if mode in (MODE_SCHEDULE, MODE_PAUSE):
+            self._own_mode_until = dt_util.utcnow() + OWN_WRITE_WINDOW
+        await self.trv.set_mode(mode)
+
+    async def _set_setpoint(self, temp: float | None, *, force: bool = False) -> None:
+        if temp is None or (temp == self.trv.setpoint and not force):
+            return
+        self._own_setpoint = (temp, dt_util.utcnow() + OWN_WRITE_WINDOW)
+        await self.trv.set_setpoint(temp)
+
+    def active_rule(self) -> CalendarRule | None:
+        """The calendar temperature or pause rule for the room now."""
+        rule = active_rule(
+            self.name, dt_util.utcnow(), self.home.rules, self.plan.profiles
+        )
+        if rule is None or (not rule.off and rule.temp is None):
+            return None
+        return rule
+
+    @callback
+    def _schedule_rule_timer(self) -> None:
+        """Apply again at the next start or end of a temperature or pause rule."""
+        if self._rule_timer is not None:
+            self._rule_timer()
+            self._rule_timer = None
+        now = dt_util.utcnow()
+        moments = [
+            moment
+            for rule in self.home.rules
+            if (rule.off or rule.temp is not None)
+            and (rule.room is None or rule.room == self.name)
+            for moment in (rule.start, rule.end)
+            if moment > now
+        ]
+        if self.override is None and self.sync_state != "synced":
+            # The plan target is held by hand: apply again at the next plan change.
+            change = self._plan_next_change(now)
+            if change is not None:
+                moments.append(change[0])
+        if moments:
+            self._rule_timer = async_track_point_in_utc_time(
+                self.hass, self._rule_time, min(moments)
+            )
+
+    async def _rule_time(self, _now: datetime) -> None:
+        self._rule_timer = None
+        await self.apply()
+
+    # --- overrides --------------------------------------------------------
+
+    @property
+    def override(self) -> Override | None:
+        """The active override."""
+        return self.home.data["overrides"].get(self.room_id)
+
+    @property
+    def target(self) -> float | None:
+        """The target now, with the override (None = pause)."""
+        override = self.override
+        if override is not None:
+            return override.temp
+        return self.target_now()
+
+    @property
+    def next_change(self) -> tuple[datetime, float | None] | None:
+        """The next change of the target: the end of the override, or the plan."""
+        override = self.override
+        if override is not None:
+            if override.until is None:
+                return None
+            return override.until, self._plan_target(override.until)
+        return self._plan_next_change(dt_util.utcnow())
+
+    @property
+    def mode(self) -> Literal["auto", "heat", "off"]:
+        """auto = plan or timed override; heat and off = override until cancel."""
+        override = self.override
+        if override is None:
+            return "auto"
+        if override.temp is None:
+            return "off"
+        return "heat" if override.kind == "until_cancel" else "auto"
+
+    def _plan_target(self, at: datetime) -> float | None:
+        home = self.home
+        return target_at(
+            self.plan,
+            self.name,
+            at,
+            home.rules,
+            home.holidays,
+            home.holiday_profile,
+            home.options.min_temp,
+        )
+
+    def _plan_next_change(self, at: datetime) -> tuple[datetime, float | None] | None:
+        home = self.home
+        return resolver_next_change(
+            self.plan,
+            self.name,
+            at,
+            home.rules,
+            home.holidays,
+            home.holiday_profile,
+            home.options.min_temp,
+        )
+
+    async def set_override(
+        self,
+        temp: float | None,
+        kind: OverrideKind = "timed",
+        hours: float | None = None,
+        *,
+        source: OverrideSource = "ha",
+    ) -> None:
+        """Hold a temperature (None = pause) for a time, to the next change or until cancel."""
+        if temp is not None:
+            temp = _clamp(round_temp(temp), self.home.options.min_temp)
+        now = dt_util.utcnow()
+        until: datetime | None = None
+        if kind == "timed":
+            duration = hours if hours is not None else self.room.override_hours
+            until = now + timedelta(hours=duration)
+        elif kind == "until_next":
+            change = self._plan_next_change(now)
+            until = change[0] if change else None
+        self.home.data["overrides"][self.room_id] = Override(
+            temp=temp, until=until, kind=kind, source=source
+        )
+        await self.home.save()
+        self._schedule_override_timer()
+        await self.apply()
+
+    async def cancel_override(self) -> None:
+        """End the override now."""
+        if self.home.data["overrides"].pop(self.room_id, None) is not None:
+            await self.home.save()
+        self._schedule_override_timer()
+        await self.apply()
+
+    @callback
+    def _schedule_override_timer(self) -> None:
+        if self._override_timer is not None:
+            self._override_timer()
+            self._override_timer = None
+        override = self.override
+        if override is not None and override.until is not None:
+            self._override_timer = async_track_point_in_utc_time(
+                self.hass, self._override_time, override.until
+            )
+
+    async def _override_time(self, _now: datetime) -> None:
+        self._override_timer = None
+        override = self.override
+        if override is None or override.until is None:
+            return
+        if override.until <= dt_util.utcnow():
+            await self.cancel_override()
+        else:
+            self._schedule_override_timer()
+
+    # --- knob -------------------------------------------------------------
+
+    def _is_own_setpoint(self, temp: float) -> bool:
+        if self._own_setpoint is None:
+            return False
+        value, until = self._own_setpoint
+        return temp == value and dt_util.utcnow() < until
+
+    @callback
+    def _source_changed(self, event: Event[EventStateChangedData]) -> None:
+        old = event.data["old_state"]
+        new = event.data["new_state"]
+        if new is None or new.state != SOURCE_MANUAL:
+            return
+        if old is None or old.state in (SOURCE_MANUAL, STATE_UNAVAILABLE, STATE_UNKNOWN):
+            return
+        self._schedule_knob_check()
+
+    @callback
+    def _setpoint_changed(self, old: State, new: State) -> None:
+        if old.attributes.get(ATTR_TEMPERATURE) == new.attributes.get(ATTR_TEMPERATURE):
+            return
+        if self._own_mode_until is not None and dt_util.utcnow() < self._own_mode_until:
+            # After an own change to schedule or pause the thermostat sets the
+            # setpoint itself; the change source can still be an old "manual".
+            return
+        if self.trv.change_source != SOURCE_MANUAL:
+            return
+        self._schedule_knob_check()
+
+    @callback
+    def _schedule_knob_check(self) -> None:
+        """Decide later: the setpoint and the source can come in two reports."""
+        if self._knob_timer is not None:
+            self._knob_timer()
+        self._knob_timer = async_call_later(self.hass, KNOB_DELAY, self._knob_check)
+
+    @callback
+    def _knob_check(self, _now: datetime) -> None:
+        """The knob was turned: a timed override with the new temperature."""
+        self._knob_timer = None
+        if not self.hass.is_running or self.trv.change_source != SOURCE_MANUAL:
+            return
+        temp = self.trv.setpoint
+        if temp is None or self._is_own_setpoint(temp):
+            return
+        override = self.override
+        if override is not None and override.source == "knob" and override.temp == temp:
+            return
+        _LOGGER.debug("%s: the knob changed the setpoint to %s", self.name, temp)
+        self.home.entry.async_create_background_task(
+            self.hass,
+            self.set_override(temp, "timed", source="knob"),
+            f"heating_plan knob {self.name}",
+        )
 
     def _carry_over_differs(self, target: float) -> bool:
         """Before today's first point the thermostat uses the last point of the
@@ -411,6 +737,11 @@ class HomeController:
 
     async def _interval(self, _now: datetime) -> None:
         await self.refresh_calendar()
+
+    async def cancel_all(self) -> None:
+        """End the overrides of all rooms."""
+        for room in self.rooms.values():
+            await room.cancel_override()
 
     async def _midnight(self, _now: datetime) -> None:
         """A new day: the day that passed gets the profile for next week."""
