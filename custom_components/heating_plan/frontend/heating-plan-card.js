@@ -71,17 +71,41 @@ const timeToMinute = (t) => {
 };
 const fmtTemp = (t) =>
   t === null || t === undefined ? "–" : `${Number(t).toLocaleString("pl-PL", { maximumFractionDigits: 1 })}°`;
-const fmtClock = (iso) => {
-  const d = new Date(iso);
-  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+// Times use the Home Assistant time zone, not the time zone of the browser.
+let haTimeZone;
+const setTimeZone = (tz) => {
+  haTimeZone = tz || undefined;
 };
+/** {day: "YYYY-MM-DD", weekday: 0-6 (Sunday = 0), minute: 0-1439} in the HA time zone. */
+function wallClock(date) {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: haTimeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      weekday: "short",
+      hourCycle: "h23",
+    })
+      .formatToParts(date)
+      .map((p) => [p.type, p.value])
+  );
+  const weekdays = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  return {
+    day: `${parts.year}-${parts.month}-${parts.day}`,
+    weekday: weekdays[parts.weekday],
+    minute: Number(parts.hour) * 60 + Number(parts.minute),
+  };
+}
+const fmtClock = (iso) => minuteToTime(wallClock(new Date(iso)).minute);
 const fmtWhen = (iso) => {
-  const d = new Date(iso);
-  const now = new Date();
-  const sameDay = d.toDateString() === now.toDateString();
-  if (sameDay) return fmtClock(iso);
+  const at = wallClock(new Date(iso));
+  const now = wallClock(new Date());
+  if (at.day === now.day) return minuteToTime(at.minute);
   const days = ["nd", "pn", "wt", "śr", "cz", "pt", "so"];
-  return `${days[d.getDay()]} ${fmtClock(iso)}`;
+  return `${days[at.weekday]} ${minuteToTime(at.minute)}`;
 };
 
 /** Parse "HH:MM/temp HH:MM/temp" into [{minute, temp}]. */
@@ -125,7 +149,7 @@ export function validatePlan(profiles, week) {
     const error = validateDay(profiles[name]);
     if (error) return `${name}: ${error}`;
   }
-  if (week.length !== 7 || week.some((n) => !(n in profiles))) return TEXT.errWeek;
+  if (week.length !== 7 || week.some((n) => !Object.hasOwn(profiles, n))) return TEXT.errWeek;
   return null;
 }
 
@@ -219,6 +243,7 @@ class HeatingPlanCard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
+    setTimeZone(hass.config?.time_zone);
     // Reload the rooms when a room or its thermostat changes.
     const ids = (this._rooms || []).map((r) => r.entity_id).filter(Boolean);
     const watch = ids.map((id) => hass.states[id]?.last_updated).join("|");
@@ -323,7 +348,7 @@ class HeatingPlanCard extends HTMLElement {
       ),
       week: [...room.plan.week],
     };
-    ui.profile = room.today_profile in ui.draft.profiles ? room.today_profile : Object.keys(ui.draft.profiles)[0];
+    ui.profile = Object.hasOwn(ui.draft.profiles, room.today_profile) ? room.today_profile : Object.keys(ui.draft.profiles)[0];
     this._render();
   }
 
@@ -376,7 +401,7 @@ class HeatingPlanCard extends HTMLElement {
     const ui = this._state(room);
     const name = (window.prompt(TEXT.profileName, copy ? `${ui.profile} 2` : "") || "").trim();
     if (!name) return;
-    if (name in ui.draft.profiles) {
+    if (Object.hasOwn(ui.draft.profiles, name)) {
       ui.message = { error: true, text: TEXT.errNameExists };
     } else {
       ui.draft.profiles[name] = copy
@@ -542,9 +567,8 @@ class HeatingPlanCard extends HTMLElement {
       bar.appendChild(block);
     }
     if (showNow) {
-      const now = new Date();
       const marker = el("div", { class: "now" });
-      marker.style.left = `${((now.getHours() * 60 + now.getMinutes()) / 1440) * 100}%`;
+      marker.style.left = `${(wallClock(new Date()).minute / 1440) * 100}%`;
       bar.appendChild(marker);
     }
     wrap.appendChild(bar);
