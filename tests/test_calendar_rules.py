@@ -83,6 +83,13 @@ def test_room_name_inside_a_word_is_not_a_room() -> None:
     assert rule.room is None
 
 
+def test_digit_in_room_name_is_not_the_temperature() -> None:
+    rule = parse_event("Pokój 2 22", S, E, ["Pokój 2", "Salon"], PROFILES)
+    assert rule is not None
+    assert (rule.room, rule.temp) == ("Pokój 2", 22)
+    assert parse_event("Pokój 2", S, E, ["Pokój 2"], PROFILES) is None
+
+
 def test_profile_wins_over_number() -> None:
     rule = parse("Wolne 2 dni")
     assert rule is not None

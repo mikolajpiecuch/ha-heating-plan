@@ -7,12 +7,13 @@ All times use the Home Assistant time zone (``dt_util``).
 
 from __future__ import annotations
 
+from collections.abc import Container
 from datetime import UTC, date, datetime, time, timedelta
 
 from homeassistant.util import dt as dt_util
 
 from .calendar_rules import CalendarRule
-from .model import MAX_TEMP, DayProfile, RoomPlan
+from .model import MAX_TEMP, DayProfile, Point, RoomPlan
 
 NEXT_CHANGE_DAYS = 8
 
@@ -48,7 +49,28 @@ def _best(rules: list[CalendarRule]) -> CalendarRule | None:
     """Room rule before a whole-home rule; then the later start."""
     if not rules:
         return None
-    return max(rules, key=lambda r: (r.room is not None, r.start))
+    return max(rules, key=lambda r: (r.room is not None, r.start, r.end))
+
+
+def active_rule(
+    room: str,
+    at: datetime,
+    rules: list[CalendarRule],
+    profiles: Container[str] | None = None,
+) -> CalendarRule | None:
+    """The calendar rule that decides for a room at a time.
+
+    A profile rule for a profile that the room does not have is ignored.
+    """
+    return _best(
+        [
+            r
+            for r in rules
+            if _applies_to(r, room)
+            and r.active_at(at)
+            and (r.profile is None or profiles is None or r.profile in profiles)
+        ]
+    )
 
 
 def profile_for_date(
@@ -106,7 +128,7 @@ def target_at(
     min_temp: float,
 ) -> float | None:
     """The target temperature at a time. None means pause."""
-    rule = _best([r for r in rules if _applies_to(r, room) and r.active_at(at)])
+    rule = active_rule(room, at, rules, plan.profiles)
     if rule is not None and rule.off:
         return None
     if rule is not None and rule.temp is not None:
@@ -161,12 +183,19 @@ def device_week(
     rules: list[CalendarRule],
     holidays: set[date],
     holiday_profile: str | None,
+    min_temp: float | None = None,
 ) -> dict[int, DayProfile]:
-    """The profile for each weekday on the thermostat: today to today + 6."""
+    """The profile for each weekday on the thermostat: today to today + 6.
+
+    With min_temp, no point is below min_temp.
+    """
     week: dict[int, DayProfile] = {}
     for offset in range(7):
         day = today + timedelta(days=offset)
-        week[day.weekday()] = _profile(
-            plan, room, day, rules, holidays, holiday_profile
-        )
+        profile = _profile(plan, room, day, rules, holidays, holiday_profile)
+        if min_temp is not None:
+            profile = DayProfile(
+                tuple(Point(p.minute, max(p.temp, min_temp)) for p in profile.points)
+            )
+        week[day.weekday()] = profile
     return week

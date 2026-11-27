@@ -244,6 +244,28 @@ def test_device_week_rolls_7_days(plan: RoomPlan) -> None:
     assert week[5] == FREE
 
 
+def test_device_week_applies_min_temp(plan: RoomPlan) -> None:
+    plan.profiles["Praca"] = DayProfile.parse("06:00/5 22:00/17")
+    week = device_week(plan, ROOM, WED, [], set(), None, min_temp=7)
+    assert week[2].to_z2m() == "06:00/7 22:00/17"
+    assert week[5] == FREE
+
+
+def test_rule_with_unknown_profile_does_not_hide_temp_rule(plan: RoomPlan) -> None:
+    rules = [
+        CalendarRule(local(WED, 10), local(WED, 12), None, None, 15, False),
+        CalendarRule(local(WED), local(WED + timedelta(1)), ROOM, "Inny", None, False),
+    ]
+    assert target_at(plan, ROOM, local(WED, 11), rules, set(), None, 7) == 15
+
+
+def test_same_scope_and_start_is_stable(plan: RoomPlan) -> None:
+    short = CalendarRule(local(WED, 10), local(WED, 11), None, None, 15, False)
+    long = CalendarRule(local(WED, 10), local(WED, 12), None, None, 22, False)
+    for rules in ([short, long], [long, short]):
+        assert target_at(plan, ROOM, local(WED, 10, 30), rules, set(), None, 7) == 22
+
+
 def test_device_week_today_rule(plan: RoomPlan) -> None:
     rules = [day_rule(WED, profile="Wolne")]
     week = device_week(plan, ROOM, WED, rules, set(), None)

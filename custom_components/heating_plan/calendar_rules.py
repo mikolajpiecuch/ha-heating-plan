@@ -47,6 +47,10 @@ def normalize(text: str) -> str:
     return " ".join(text.casefold().translate(_PL).split())
 
 
+def _word_re(key: str) -> re.Pattern[str]:
+    return re.compile(rf"(?<!\w){re.escape(key)}(?!\w)")
+
+
 def _find(text: str, names: list[str]) -> str | None:
     """Return the name that is in the text as whole words (the longest one)."""
     found: str | None = None
@@ -54,7 +58,7 @@ def _find(text: str, names: list[str]) -> str | None:
         key = normalize(name)
         if not key:
             continue
-        if re.search(rf"(?<!\w){re.escape(key)}(?!\w)", text) and (
+        if _word_re(key).search(text) and (
             found is None or len(key) > len(normalize(found))
         ):
             found = name
@@ -73,6 +77,9 @@ def parse_event(
     if not text:
         return None
     room = _find(text, rooms)
+    if room is not None:
+        # A digit in the room name ("Pokój 2") is not a temperature.
+        text = _word_re(normalize(room)).sub(" ", text, count=1)
 
     if any(re.search(rf"(?<!\w){word}(?!\w)", text) for word in _OFF_WORDS):
         return CalendarRule(start, end, room, None, None, True)
