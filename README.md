@@ -27,6 +27,22 @@ Home Assistant 2026.11 has the Marketplace (HACS) built in. The Marketplace inst
 2. Install "Heating Plan" (the latest release) and restart Home Assistant.
 3. Go to Settings > Devices & services and add "Heating Plan".
 
+## Lovelace card
+
+The integration adds the card `custom:heating-plan-card`. Without `entity`, the card shows all rooms.
+
+```yaml
+type: custom:heating-plan-card
+entity: climate.office_heating  # optional
+```
+
+![Card](docs/images/card-desktop.jpg)
+
+## Development
+
+- Tests: `pip install -r requirements_test.txt`, then `pytest`.
+- A development Home Assistant with fake thermostats: `scripts/develop`, then `python dev/setup_demo.py`. Open http://localhost:8123 and log in as `dev` / `dev`.
+
 ## License
 
 MIT

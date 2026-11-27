@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv, device_registry as dr
 from homeassistant.helpers.typing import ConfigType
+from homeassistant.loader import async_get_integration
 
 from .const import DOMAIN, SUBENTRY_ROOM, Options, RoomConfig, default_plan
 from .controller import HomeController, RoomController
@@ -23,6 +25,9 @@ PLATFORMS = [Platform.BUTTON, Platform.CLIMATE, Platform.SENSOR]
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
+CARD_URL = f"/{DOMAIN}/heating-plan-card.js"
+CARD_PATH = Path(__file__).parent / "frontend" / "heating-plan-card.js"
+
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Register the services and the websocket commands."""
@@ -31,7 +36,22 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
     async_register_services(hass)
     async_register_websocket(hass)
+    await async_register_card(hass)
     return True
+
+
+async def async_register_card(hass: HomeAssistant) -> None:
+    """Serve the Lovelace card and load it in the frontend."""
+    if hass.http is None or "frontend" not in hass.config.components:
+        return
+    from homeassistant.components.frontend import add_extra_js_url  # noqa: PLC0415
+    from homeassistant.components.http import StaticPathConfig  # noqa: PLC0415
+
+    integration = await async_get_integration(hass, DOMAIN)
+    await hass.http.async_register_static_paths(
+        [StaticPathConfig(CARD_URL, str(CARD_PATH), cache_headers=False)]
+    )
+    add_extra_js_url(hass, f"{CARD_URL}?v={integration.version}")
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: HeatingPlanConfigEntry) -> bool:

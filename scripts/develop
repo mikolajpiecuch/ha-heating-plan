@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Run a development Home Assistant with Heating Plan and fake thermostats.
+#
+# Usage: scripts/develop [config dir]   (default: ./config)
+# Needs: a Python environment with homeassistant and home-assistant-frontend.
+# Login: user "dev", password "dev" (development only).
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+CONFIG="${1:-$ROOT/config}"
+mkdir -p "$CONFIG/custom_components"
+ln -sfn "$ROOT/custom_components/heating_plan" "$CONFIG/custom_components/heating_plan"
+ln -sfn "$ROOT/dev/fake_trv" "$CONFIG/custom_components/fake_trv"
+
+if [ ! -f "$CONFIG/configuration.yaml" ]; then
+  cat > "$CONFIG/configuration.yaml" <<'YAML'
+homeassistant:
+  name: Heating Plan dev
+  time_zone: Europe/Berlin
+  unit_system: metric
+  country: PL
+  language: pl
+frontend:
+config:
+http:
+logger:
+  default: info
+  logs:
+    custom_components.heating_plan: debug
+fake_trv:
+  - office
+  - bedroom
+YAML
+fi
+
+if [ ! -f "$CONFIG/.storage/onboarding" ]; then
+  hass --script auth -c "$CONFIG" add dev dev
+  mkdir -p "$CONFIG/.storage"
+  cat > "$CONFIG/.storage/onboarding" <<'JSON'
+{"version": 4, "minor_version": 1, "key": "onboarding",
+ "data": {"done": ["user", "core_config", "analytics", "integration"]}}
+JSON
+fi
+
+exec hass -c "$CONFIG" --debug

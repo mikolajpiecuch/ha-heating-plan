@@ -1,0 +1,11 @@
+{
+  "domain": "fake_trv",
+  "name": "Fake TRV (development only)",
+  "codeowners": [],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/mikolajpiecuch/ha-heating-plan",
+  "iot_class": "local_push",
+  "requirements": [],
+  "version": "0.0.0"
+}
