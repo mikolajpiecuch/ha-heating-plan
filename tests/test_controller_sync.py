@@ -8,6 +8,7 @@ from freezegun.api import FrozenDateTimeFactory
 import pytest
 
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 
 from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
@@ -100,6 +101,90 @@ async def test_late_readback_is_accepted(hass: HomeAssistant) -> None:
     assert [m["option"] for m in s.trvs[0].services("select", "select_option")] == [
         "schedule"
     ]
+
+
+async def test_no_write_loop_after_error(hass: HomeAssistant) -> None:
+    def before(s) -> None:
+        s.trvs[0].lose_days = {4}
+
+    s = await setup_home(hass, before_setup=before)
+    trv = s.trvs[0]
+    assert s.room().sync_state == "error"
+    trv.clear_calls()
+    # The thermostat reports a wrong day again, and the calendar is read again.
+    trv.set_day(4, "06:00/19")
+    await settle(hass)
+    await s.home.refresh_calendar()
+    await settle(hass)
+    assert trv.day_writes() == []
+
+    # A reconnect gives exactly one new write cycle (write and one retry).
+    trv.set_available(False)
+    await settle(hass)
+    trv.set_available(True)
+    await settle(hass)
+    assert trv.day_writes() == [(4, WORK), (4, WORK)]
+    assert s.room().sync_state == "error"
+
+
+async def test_device_week_uses_min_temp(hass: HomeAssistant) -> None:
+    s = await setup_home(hass)
+    trv = s.trvs[0]
+    trv.clear_calls()
+    plan = RoomPlan(
+        profiles={"Praca": DayProfile.parse("06:00/5 22:00/17")},
+        week=("Praca",) * 7,
+    )
+    await s.room().set_plan(plan)
+    await settle(hass)
+    assert (2, "06:00/7 22:00/17") in trv.day_writes()
+
+
+async def test_rollover_sets_carry_over_temperature(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """Before today's first point the thermostat uses the slot of yesterday.
+
+    At 00:05 that slot gets the profile for next week. If its last point is not
+    the same, the integration sets the right temperature until today's first point.
+    """
+    freezer.move_to(datetime(2026, 12, 1, 23, 0, tzinfo=TZ))  # Tuesday
+
+    def before(s) -> None:
+        s.calendar.add("Wolne", date(2026, 12, 8), date(2026, 12, 9))  # next Tuesday
+
+    s = await setup_home(hass, before_setup=before)
+    trv = s.trvs[0]
+    plan = RoomPlan(
+        profiles={
+            "Praca": DayProfile.parse(WORK),
+            "Wolne": DayProfile.parse("07:30/21 23:00/19"),
+        },
+        week=("Praca",) * 5 + ("Wolne",) * 2,
+    )
+    await s.room().set_plan(plan)
+    await settle(hass)
+    trv.clear_calls()
+
+    freezer.move_to(datetime(2026, 12, 2, 0, 5, tzinfo=TZ))  # Wednesday
+    async_fire_time_changed(hass)
+    await settle(hass)
+    assert trv.day_writes() == [(1, "07:30/21 23:00/19")]
+    # Tuesday's last point (Praca) was 17, the new Tuesday slot ends with 19.
+    assert [c["temperature"] for c in trv.services("climate", "set_temperature")] == [17]
+
+
+async def test_entering_schedule_before_first_point_sets_carry_over(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    freezer.move_to(datetime(2026, 12, 2, 3, 0, tzinfo=TZ))  # Wednesday 03:00
+
+    def before(s) -> None:
+        s.calendar.add("Wolne", date(2026, 12, 8), date(2026, 12, 9))
+
+    s = await setup_home(hass, before_setup=before)
+    # The Tuesday slot holds next Tuesday (Wolne, last 17 = same): no setpoint.
+    assert s.trvs[0].services("climate", "set_temperature") == []
 
 
 async def test_never_writes_empty_day(hass: HomeAssistant) -> None:
@@ -220,6 +305,15 @@ async def test_holidays_change_the_profile(hass: HomeAssistant) -> None:
     assert date(2026, 12, 25) in s.home.holidays
     friday_write = [w for w in s.trvs[0].day_writes() if w[0] == 4]
     assert friday_write == [(4, WORK)]  # 2026-12-04 is a normal Friday
+
+
+async def test_room_without_entities_is_skipped(hass: HomeAssistant) -> None:
+    def before(s) -> None:
+        er.async_get(hass).async_remove(s.trvs[1].day_entities[3])
+
+    s = await setup_home(hass, ("Biuro", "Sypialnia"), before_setup=before)
+    assert [r.name for r in s.home.rooms.values()] == ["Biuro"]
+    assert s.room().sync_state == "synced"
 
 
 async def test_unload_stops_timers(

@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import logging
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
 
 from .const import SUBENTRY_ROOM, Options, RoomConfig, default_plan
 from .controller import HomeController, RoomController
 from .store import PlanStore
 from .trv import BoschTrv, TrvError
+
+_LOGGER = logging.getLogger(__name__)
 
 type HeatingPlanConfigEntry = ConfigEntry[HomeController]
 
@@ -41,7 +44,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: HeatingPlanConfigEntry) 
         try:
             trv = BoschTrv.from_climate(hass, room.climate_entity_id)
         except TrvError as err:
-            raise ConfigEntryNotReady(str(err)) from err
+            # The other rooms still work.
+            _LOGGER.error("Room %s is not started: %s", room.name, err)
+            continue
         home.rooms[room_id] = RoomController(hass, room_id, room, trv, store, home)
 
     entry.runtime_data = home

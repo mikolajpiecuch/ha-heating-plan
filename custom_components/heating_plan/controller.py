@@ -115,6 +115,7 @@ class RoomController:
             home.rules,
             home.holidays,
             home.holiday_profile,
+            home.options.min_temp,
         )
 
     def target_now(self) -> float | None:
@@ -291,6 +292,9 @@ class RoomController:
             self._set_error(texts, f"Write failed: {err}")
             return
 
+        if not days and self._mismatched_days(week):
+            # Another day changed on the thermostat in the meantime.
+            days = self._mismatched_days(week)
         if days:
             self._set_error(
                 texts,
@@ -319,13 +323,31 @@ class RoomController:
 
     async def _apply(self, today_rewritten: bool) -> None:
         """Put the thermostat in the mode that the plan needs."""
+        target = self.target_now()
         if self.trv.mode != MODE_SCHEDULE:
             await self.trv.set_mode(MODE_SCHEDULE)
-        elif today_rewritten:
+            # The thermostat starts with the active point of its own plan.
+            if target is not None and self._carry_over_differs(target):
+                await self.trv.set_setpoint(target)
+        elif today_rewritten or (
+            target is not None and self._carry_over_differs(target)
+        ):
             # A new value for the active point applies only from the next point.
-            target = self.target_now()
             if target is not None and target != self.trv.setpoint:
                 await self.trv.set_setpoint(target)
+
+    def _carry_over_differs(self, target: float) -> bool:
+        """Before today's first point the thermostat uses the last point of the
+        weekday slot of yesterday. That slot can already hold next week's profile.
+        True if its temperature is not the target now.
+        """
+        now = dt_util.now()
+        week = self.desired_week(now.date())
+        first = week[now.weekday()].points[0].minute
+        if now.hour * 60 + now.minute >= first:
+            return False
+        carried = week[(now.weekday() - 1) % 7].points[-1].temp
+        return carried != target
 
     async def set_plan(self, plan: RoomPlan) -> None:
         """Check, save and write a new plan."""
