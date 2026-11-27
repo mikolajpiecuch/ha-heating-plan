@@ -67,6 +67,25 @@ def test_invalid_syntax_rejected(text: str) -> None:
         DayProfile.parse(text)
 
 
+def test_point_cuts_temp_to_tenth() -> None:
+    point = Point(0, 21.29)
+    assert point.temp == 21.2
+    assert DayProfile((point,)).to_z2m() == "00:00/21.2"
+
+
+def test_non_ascii_digits_rejected() -> None:
+    with pytest.raises(PlanError):
+        DayProfile.parse("\u0660\u0666:\u0660\u0660/\u0662\u0661")
+
+
+def test_temp_at_minute_out_of_range() -> None:
+    p = DayProfile.parse("06:00/21")
+    with pytest.raises(PlanError):
+        p.temp_at(1440, previous_day=p)
+    with pytest.raises(PlanError):
+        p.temp_at(-1, previous_day=p)
+
+
 def test_temp_at() -> None:
     p = DayProfile.parse("06:00/21 08:00/18 16:00/21 22:00/17")
     assert p.temp_at(6 * 60, previous_day=p) == 21

@@ -18,7 +18,7 @@ MAX_TEMP = 30.0
 DAYS_IN_WEEK = 7
 MINUTES_IN_DAY = 24 * 60
 
-_POINT_RE = re.compile(r"^(\d{1,2}):(\d{2})/(\d{1,2}(?:[.,]\d+)?)$")
+_POINT_RE = re.compile(r"^(\d{1,2}):(\d{2})/(\d{1,2}(?:[.,]\d+)?)$", re.ASCII)
 
 OverrideKind = Literal["timed", "until_next", "until_cancel"]
 OverrideSource = Literal["ha", "knob"]
@@ -51,6 +51,8 @@ class Point:
     temp: float
 
     def __post_init__(self) -> None:
+        # Cut to 0.1 °C here too, so that every point agrees with its Z2M text.
+        object.__setattr__(self, "temp", round_temp(self.temp))
         if not 0 <= self.minute < MINUTES_IN_DAY:
             raise PlanError(f"Time {self.minute} is not in 00:00-23:59")
         if not MIN_TEMP <= self.temp <= MAX_TEMP:
@@ -109,6 +111,8 @@ class DayProfile:
 
         Before the first point, the last point of the previous day applies.
         """
+        if not 0 <= minute < MINUTES_IN_DAY:
+            raise PlanError(f"Minute {minute} is not in 0-{MINUTES_IN_DAY - 1}")
         temp = previous_day.points[-1].temp
         for point in self.points:
             if point.minute > minute:
