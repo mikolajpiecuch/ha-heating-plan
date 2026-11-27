@@ -31,6 +31,7 @@ from homeassistant.helpers.event import (
     async_call_later,
     async_track_point_in_utc_time,
     async_track_state_change_event,
+    async_track_state_report_event,
     async_track_time_change,
     async_track_time_interval,
 )
@@ -80,6 +81,10 @@ an equal setpoint after an own setpoint write, and any setpoint after an own
 change to schedule or pause (the thermostat then sets the setpoint itself)."""
 KNOB_DELAY = 2.0
 """Seconds to wait after a knob report; then the state is read again."""
+
+REMOTE_TEMP_INTERVAL = timedelta(minutes=15)
+REMOTE_TEMP_MAX_AGE = timedelta(hours=1)
+REMOTE_TEMP_CHANGE = 0.2
 
 SyncState = Literal["synced", "pending", "error"]
 
@@ -138,6 +143,7 @@ class RoomController:
         self._knob_timer: CALLBACK_TYPE | None = None
         self._override_timer: CALLBACK_TYPE | None = None
         self._rule_timer: CALLBACK_TYPE | None = None
+        self._last_pushed: float | None = None
         self._unsubs: list[CALLBACK_TYPE] = []
         self._listeners: list[Callable[[], None]] = []
 
@@ -198,6 +204,23 @@ class RoomController:
                 self.hass, [self.trv.source_entity_id], self._source_changed
             )
         )
+        if self.room.sensor_entity_id is not None:
+            self._unsubs.append(
+                async_track_state_change_event(
+                    self.hass, [self.room.sensor_entity_id], self._sensor_changed
+                )
+            )
+            # A report of the same value makes a stale value fresh again.
+            self._unsubs.append(
+                async_track_state_report_event(
+                    self.hass, [self.room.sensor_entity_id], self._sensor_changed
+                )
+            )
+            self._unsubs.append(
+                async_track_time_interval(
+                    self.hass, self._remote_temp_interval, REMOTE_TEMP_INTERVAL
+                )
+            )
         override = self.override
         if override is not None and override.until is not None:
             if override.until <= dt_util.utcnow():
@@ -235,6 +258,69 @@ class RoomController:
     @callback
     def _started(self, _hass: HomeAssistant) -> None:
         self.request_sync()
+        self._push_remote_temp(force=True)
+
+    # --- room temperature -------------------------------------------------
+
+    def _fresh_sensor_temp(self) -> float | None:
+        """The room thermometer value, if it is valid and less than 1 h old."""
+        if self.room.sensor_entity_id is None:
+            return None
+        state = self.hass.states.get(self.room.sensor_entity_id)
+        if state is None:
+            return None
+        try:
+            value = float(state.state)
+        except ValueError:
+            return None
+        if dt_util.utcnow() - state.last_reported > REMOTE_TEMP_MAX_AGE:
+            return None
+        return value
+
+    @property
+    def current_temp(self) -> float | None:
+        """The room temperature: the room thermometer, else the thermostat."""
+        value = self._fresh_sensor_temp()
+        if value is not None:
+            return value
+        state = self.hass.states.get(self.trv.climate_entity_id)
+        current = state.attributes.get("current_temperature") if state else None
+        try:
+            return float(current) if current is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    @callback
+    def _sensor_changed(self, _event: Event[Any]) -> None:
+        self._push_remote_temp(force=False)
+
+    async def _remote_temp_interval(self, _now: datetime) -> None:
+        self._push_remote_temp(force=True)
+
+    @callback
+    def _push_remote_temp(self, *, force: bool) -> None:
+        """Send the room temperature: always (force) or on a change of 0.2 °C."""
+        value = self._fresh_sensor_temp()
+        if value is None:
+            # The next valid value is sent at once.
+            self._last_pushed = None
+            return
+        if not self.trv.available or not self.hass.is_running:
+            return
+        if not force and self._last_pushed is not None:
+            if round(abs(value - self._last_pushed), 2) < REMOTE_TEMP_CHANGE:
+                return
+        self._last_pushed = value
+        self.home.entry.async_create_background_task(
+            self.hass, self._send_remote_temp(value), f"heating_plan temp {self.name}"
+        )
+
+    async def _send_remote_temp(self, value: float) -> None:
+        try:
+            await self.trv.push_remote_temp(value)
+        except HomeAssistantError as err:
+            _LOGGER.warning("%s: cannot send the room temperature: %s", self.name, err)
+            self._last_pushed = None
 
     @callback
     def _climate_changed(self, event: Event[EventStateChangedData]) -> None:
