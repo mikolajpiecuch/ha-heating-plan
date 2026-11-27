@@ -16,7 +16,7 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
-from .model import DayProfile
+from .model import DayProfile, PlanError
 
 DAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
 
@@ -161,7 +161,9 @@ class BoschTrv:
         )
 
     async def write_day(self, weekday: int, profile: DayProfile) -> None:
-        """Write one day of the weekly schedule."""
+        """Write one day of the weekly schedule. An empty day is never sent."""
+        if not profile.points:
+            raise PlanError("An empty day is never sent to the thermostat")
         await self.hass.services.async_call(
             "text",
             "set_value",

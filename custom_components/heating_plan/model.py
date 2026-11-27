@@ -137,6 +137,8 @@ class RoomPlan:
                 raise PlanError("A profile must have a name")
             if not isinstance(profile, DayProfile):
                 raise PlanError(f"Profile '{name}' is not a day profile")
+            # Check the points again: never accept an empty day.
+            DayProfile(tuple(profile.points))
         if len(self.week) != DAYS_IN_WEEK:
             raise PlanError(f"A week must have {DAYS_IN_WEEK} days")
         for name in self.week:
