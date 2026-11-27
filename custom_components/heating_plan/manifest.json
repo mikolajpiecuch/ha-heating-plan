@@ -1,6 +1,10 @@
 {
   "domain": "heating_plan",
   "name": "Heating Plan",
+  "after_dependencies": [
+    "frontend",
+    "http"
+  ],
   "codeowners": [
     "@mikolajpiecuch"
   ],
