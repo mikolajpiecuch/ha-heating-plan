@@ -21,8 +21,10 @@ Home Assistant adds:
 
 ## Installation
 
-1. In HACS, add this repository as a custom repository of type "Integration".
-2. Install "Heating Plan" and restart Home Assistant.
+Home Assistant 2026.11 has the Marketplace (HACS) built in. The Marketplace installs a custom repository only from a GitHub release with a tag.
+
+1. In the Marketplace, add `https://github.com/mikolajpiecuch/ha-heating-plan` as a custom repository of type "Integration".
+2. Install "Heating Plan" (the latest release) and restart Home Assistant.
 3. Go to Settings > Devices & services and add "Heating Plan".
 
 ## License
