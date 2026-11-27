@@ -98,11 +98,17 @@ def _register_services(hass: HomeAssistant, trvs: list[FakeTrv]) -> None:
                 return trv
         return None
 
+    originals = {}
+
     async def handle(call: ServiceCall) -> None:
         ids = call.data[ATTR_ENTITY_ID]
         entity_id = ids[0] if isinstance(ids, list) else ids
         trv = find(entity_id)
         if trv is None:
+            # Not a fake thermostat: use the real service of the domain.
+            original = originals.get((call.domain, call.service))
+            if original is not None:
+                await original.job.target(call)
             return
         data = {**call.data, ATTR_ENTITY_ID: entity_id}
         trv.calls.append((call.domain, call.service, data))
@@ -134,6 +140,9 @@ def _register_services(hass: HomeAssistant, trvs: list[FakeTrv]) -> None:
         ("climate", "set_temperature"),
         ("number", "set_value"),
     ):
+        existing = hass.services._services.get(domain, {}).get(service)  # noqa: SLF001
+        if existing is not None and existing.job.target is not handle:
+            originals[(domain, service)] = existing
         hass.services.async_register(domain, service, handle)
 
 

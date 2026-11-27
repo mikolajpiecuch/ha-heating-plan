@@ -57,5 +57,110 @@
         }
       }
     }
+  },
+  "entity": {
+    "climate": {
+      "room": {
+        "name": "Ogrzewanie"
+      }
+    },
+    "sensor": {
+      "next_change": {
+        "name": "Następna zmiana",
+        "state_attributes": {
+          "temperature": {
+            "name": "Temperatura"
+          }
+        }
+      },
+      "override_until": {
+        "name": "Nadpisanie do"
+      },
+      "sync_state": {
+        "name": "Stan planu",
+        "state": {
+          "synced": "Wgrany",
+          "pending": "Czeka",
+          "error": "Błąd"
+        }
+      }
+    },
+    "button": {
+      "cancel_override": {
+        "name": "Anuluj nadpisanie"
+      },
+      "cancel_all": {
+        "name": "Anuluj wszystkie nadpisania"
+      }
+    }
+  },
+  "exceptions": {
+    "unknown_room": {
+      "message": "{entity_id} nie jest pokojem planu ogrzewania."
+    },
+    "invalid_plan": {
+      "message": "Plan jest niepoprawny: {error}"
+    }
+  },
+  "selector": {
+    "override_mode": {
+      "options": {
+        "timed": "Na czas",
+        "until_next": "Do następnej zmiany",
+        "until_cancel": "Do odwołania"
+      }
+    }
+  },
+  "services": {
+    "set_override": {
+      "name": "Ustaw nadpisanie",
+      "description": "Utrzymuje temperaturę w pokoju na czas, do następnej zmiany albo do odwołania.",
+      "fields": {
+        "entity_id": {
+          "name": "Pokój",
+          "description": "Encja climate pokoju z planu ogrzewania."
+        },
+        "temperature": {
+          "name": "Temperatura",
+          "description": "Temperatura do utrzymania. Puste: obecna docelowa."
+        },
+        "mode": {
+          "name": "Tryb",
+          "description": "Jak długo trwa nadpisanie."
+        },
+        "hours": {
+          "name": "Godziny",
+          "description": "Czas dla trybu „Na czas”. Puste: domyślny czas pokoju."
+        }
+      }
+    },
+    "cancel_override": {
+      "name": "Anuluj nadpisanie",
+      "description": "Kończy nadpisanie. Pokój wraca do planu.",
+      "fields": {
+        "entity_id": {
+          "name": "Pokój",
+          "description": "Puste: wszystkie pokoje."
+        }
+      }
+    },
+    "set_plan": {
+      "name": "Ustaw plan",
+      "description": "Ustawia profile dnia i tydzień pokoju.",
+      "fields": {
+        "entity_id": {
+          "name": "Pokój",
+          "description": "Encja climate pokoju z planu ogrzewania."
+        },
+        "profiles": {
+          "name": "Profile",
+          "description": "Nazwa profilu → tekst dnia, np. \"06:00/21 22:00/17\". 1–10 punktów, 5–30 °C."
+        },
+        "week": {
+          "name": "Tydzień",
+          "description": "7 nazw profili, od poniedziałku."
+        }
+      }
+    }
   }
 }

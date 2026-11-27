@@ -57,5 +57,110 @@
         }
       }
     }
+  },
+  "entity": {
+    "climate": {
+      "room": {
+        "name": "Heating"
+      }
+    },
+    "sensor": {
+      "next_change": {
+        "name": "Next change",
+        "state_attributes": {
+          "temperature": {
+            "name": "Temperature"
+          }
+        }
+      },
+      "override_until": {
+        "name": "Override until"
+      },
+      "sync_state": {
+        "name": "Plan state",
+        "state": {
+          "synced": "Synced",
+          "pending": "Pending",
+          "error": "Error"
+        }
+      }
+    },
+    "button": {
+      "cancel_override": {
+        "name": "Cancel override"
+      },
+      "cancel_all": {
+        "name": "Cancel all overrides"
+      }
+    }
+  },
+  "exceptions": {
+    "unknown_room": {
+      "message": "{entity_id} is not a room of Heating Plan."
+    },
+    "invalid_plan": {
+      "message": "The plan is not valid: {error}"
+    }
+  },
+  "selector": {
+    "override_mode": {
+      "options": {
+        "timed": "For a time",
+        "until_next": "Until the next change",
+        "until_cancel": "Until cancel"
+      }
+    }
+  },
+  "services": {
+    "set_override": {
+      "name": "Set override",
+      "description": "Holds a temperature in a room for a time, until the next change or until cancel.",
+      "fields": {
+        "entity_id": {
+          "name": "Room",
+          "description": "The Heating Plan climate entity of the room."
+        },
+        "temperature": {
+          "name": "Temperature",
+          "description": "The temperature to hold. Empty: the current target."
+        },
+        "mode": {
+          "name": "Mode",
+          "description": "How long the override stays."
+        },
+        "hours": {
+          "name": "Hours",
+          "description": "The time for the mode 'For a time'. Empty: the default of the room."
+        }
+      }
+    },
+    "cancel_override": {
+      "name": "Cancel override",
+      "description": "Ends the override. The room follows the plan again.",
+      "fields": {
+        "entity_id": {
+          "name": "Room",
+          "description": "Empty: all rooms."
+        }
+      }
+    },
+    "set_plan": {
+      "name": "Set plan",
+      "description": "Sets the day profiles and the week of a room.",
+      "fields": {
+        "entity_id": {
+          "name": "Room",
+          "description": "The Heating Plan climate entity of the room."
+        },
+        "profiles": {
+          "name": "Profiles",
+          "description": "Profile name to day text, for example \"06:00/21 22:00/17\". 1 to 10 points, 5 to 30 °C."
+        },
+        "week": {
+          "name": "Week",
+          "description": "7 profile names, Monday first."
+        }
+      }
+    }
   }
 }

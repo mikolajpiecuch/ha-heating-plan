@@ -8,6 +8,7 @@ from datetime import date, datetime
 from homeassistant.config_entries import ConfigSubentryData
 from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse
 from homeassistant.helpers import area_registry as ar
+from homeassistant.setup import async_setup_component
 
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -81,6 +82,9 @@ async def setup_home(
 ) -> Setup:
     """Add fake thermostats, a calendar and the config entry, then set it up."""
     await hass.config.async_set_time_zone("Europe/Berlin")
+    # Load the real domains first, so that the fake services replace theirs.
+    for domain in ("climate", "select", "text", "number"):
+        assert await async_setup_component(hass, domain, {})
     trvs = add_fake_trvs(hass, [f"trv_{i}" for i in range(len(names))])
     calendar = add_fake_calendar(hass)
     areas = ar.async_get(hass)
