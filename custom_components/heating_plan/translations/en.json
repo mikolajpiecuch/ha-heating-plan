@@ -7,6 +7,54 @@
           "name": "Name"
         }
       }
+    },
+    "abort": {
+      "single_instance_allowed": "Heating Plan is already configured."
+    }
+  },
+  "config_subentries": {
+    "room": {
+      "initiate_flow": {
+        "user": "Add room"
+      },
+      "entry_type": "Room",
+      "step": {
+        "user": {
+          "title": "Add room",
+          "data": {
+            "name": "Room name",
+            "area_id": "Area",
+            "climate_entity_id": "Thermostat (Bosch BTH-RA in Zigbee2MQTT)",
+            "sensor_entity_id": "Room thermometer",
+            "override_hours": "Default override time"
+          },
+          "data_description": {
+            "name": "Use this name in calendar events, for example \"Office 22\".",
+            "sensor_entity_id": "Optional. The thermostat uses this temperature instead of its own sensor."
+          }
+        }
+      },
+      "error": {
+        "name_exists": "A room with this name already exists.",
+        "name_empty": "Enter a room name.",
+        "trv_not_supported": "This thermostat has no weekly schedule entities. Zigbee2MQTT 2.14.3 or later and a Bosch BTH-RA are necessary."
+      },
+      "abort": {
+        "already_configured": "This thermostat is already used by a room."
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Heating Plan options",
+        "data": {
+          "calendar_entity_id": "Calendar with exceptions",
+          "holidays_enabled": "Use public holidays",
+          "holiday_profile": "Profile for public holidays",
+          "min_temp": "Minimum temperature"
+        }
+      }
     }
   }
 }
