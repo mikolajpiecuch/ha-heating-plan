@@ -38,6 +38,9 @@ async def tick(hass: HomeAssistant, freezer: FrozenDateTimeFactory, delta: timed
     await settle(hass)
 
 
+KNOB_WAIT = timedelta(seconds=3)
+
+
 def modes(s: Setup) -> list[str]:
     return [m["option"] for m in s.trvs[0].services("select", "select_option")]
 
@@ -123,12 +126,14 @@ async def test_pause_override(hass: HomeAssistant) -> None:
 
 
 @pytest.mark.usefixtures("at_seven")
-async def test_knob_change_becomes_timed_override(hass: HomeAssistant) -> None:
+async def test_knob_change_becomes_timed_override(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
     s = await setup_home(hass)
     trv = s.trvs[0]
     trv.clear_calls()
     trv.turn_knob(24)
-    await settle(hass)
+    await tick(hass, freezer, KNOB_WAIT)
     override = s.room().override
     assert override == Override(
         temp=24, until=dt_util.utcnow() + timedelta(hours=3), kind="timed", source="knob"
@@ -144,10 +149,10 @@ async def test_knob_again_restarts_timer(
     s = await setup_home(hass)
     trv = s.trvs[0]
     trv.turn_knob(24)
-    await settle(hass)
+    await tick(hass, freezer, KNOB_WAIT)
     await tick(hass, freezer, timedelta(hours=1))
     trv.turn_knob(22.5)
-    await settle(hass)
+    await tick(hass, freezer, KNOB_WAIT)
     override = s.room().override
     assert override.temp == 22.5
     assert override.until == dt_util.utcnow() + timedelta(hours=3)
@@ -159,19 +164,23 @@ async def test_knob_again_restarts_timer(
 
 
 @pytest.mark.usefixtures("at_seven")
-async def test_knob_during_ha_override_replaces_it(hass: HomeAssistant) -> None:
+async def test_knob_during_ha_override_replaces_it(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
     s = await setup_home(hass)
     await s.room().set_override(23, kind="until_cancel")
     await settle(hass)
     s.trvs[0].turn_knob(20)
-    await settle(hass)
+    await tick(hass, freezer, KNOB_WAIT)
     assert s.room().override.source == "knob"
     assert s.room().override.kind == "timed"
     assert s.room().override.temp == 20
 
 
 @pytest.mark.usefixtures("at_seven")
-async def test_own_write_is_not_knob(hass: HomeAssistant) -> None:
+async def test_own_write_is_not_knob(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
     s = await setup_home(hass)
     trv = s.trvs[0]
     await s.room().set_override(23)
@@ -182,7 +191,7 @@ async def test_own_write_is_not_knob(hass: HomeAssistant) -> None:
     # After a knob turn the source is "manual". The new setpoint of an own
     # write comes before the new source.
     trv.turn_knob(24)
-    await settle(hass)
+    await tick(hass, freezer, KNOB_WAIT)
     assert s.room().override.source == "knob"
     trv.source_on_write = False
     await s.room().set_override(21)
@@ -196,13 +205,102 @@ async def test_own_write_is_not_knob(hass: HomeAssistant) -> None:
 
 
 @pytest.mark.usefixtures("at_seven")
-async def test_schedule_change_is_not_knob(hass: HomeAssistant) -> None:
+async def test_schedule_change_is_not_knob(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
     s = await setup_home(hass)
     trv = s.trvs[0]
     trv.set_source("schedule")
     trv.set_setpoint(18)
-    await settle(hass)
+    await tick(hass, freezer, KNOB_WAIT)
     assert s.room().override is None
+
+
+@pytest.mark.usefixtures("at_seven")
+async def test_end_of_knob_override_is_not_a_new_knob_turn(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """The source stays "manual" during a knob override. At the end the
+    thermostat reports the plan setpoint first and the source 1 s later."""
+    s = await setup_home(hass)
+    trv = s.trvs[0]
+    trv.turn_knob(24)
+    await tick(hass, freezer, KNOB_WAIT)
+    assert s.room().override.source == "knob"
+    trv.clear_calls()
+    await tick(hass, freezer, timedelta(hours=3))
+    await tick(hass, freezer, KNOB_WAIT)
+    assert s.room().override is None
+    assert modes(s) == ["schedule"]
+    await tick(hass, freezer, timedelta(minutes=10))
+    assert s.room().override is None
+    assert modes(s) == ["schedule"]
+
+
+@pytest.mark.usefixtures("at_seven")
+async def test_quick_knob_turns_give_one_override(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    s = await setup_home(hass)
+    trv = s.trvs[0]
+    await tick(hass, freezer, timedelta(minutes=2))  # after the own schedule write
+    trv.clear_calls()
+    trv.turn_knob(22)
+    await tick(hass, freezer, timedelta(seconds=1))
+    trv.turn_knob(23)
+    await tick(hass, freezer, timedelta(seconds=1))
+    assert s.room().override is None
+    await tick(hass, freezer, KNOB_WAIT)
+    assert s.room().override.temp == 23
+    assert modes(s) == ["manual"]
+
+
+async def test_empty_day_in_schedule_on_error_holds_manual(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """A day that is not confirmed and empty on the device would give 0 °C."""
+    freezer.move_to(datetime(2026, 12, 2, 7, 0, tzinfo=TZ))
+    work = "06:00/21 08:00/18 16:00/21 22:00/17"
+    free = "07:30/21 23:00/17"
+
+    def before(s: Setup) -> None:
+        for weekday in range(7):
+            s.trvs[0].set_day(weekday, work if weekday < 5 else free)
+        s.trvs[0].set_day(4, "")
+        s.trvs[0].set_mode("schedule")
+        s.trvs[0].lose_days = {4}
+
+    s = await setup_home(hass, before_setup=before)
+    assert s.room().sync_state == "error"
+    assert modes(s) == ["manual"]
+    assert setpoints(s) == [21]
+
+
+async def test_manual_hold_follows_plan_points(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    freezer.move_to(datetime(2026, 12, 2, 7, 0, tzinfo=TZ))
+
+    def before(s: Setup) -> None:
+        s.trvs[0].lose_days = {4}
+
+    s = await setup_home(hass, before_setup=before)
+    assert s.room().sync_state == "error"
+    assert setpoints(s) == [21]
+    await tick(hass, freezer, timedelta(hours=1))
+    assert setpoints(s) == [21, 18]
+
+
+@pytest.mark.usefixtures("at_seven")
+async def test_until_next_without_next_change_is_auto(hass: HomeAssistant) -> None:
+    from custom_components.heating_plan.model import DayProfile, RoomPlan
+
+    s = await setup_home(hass)
+    flat = RoomPlan(profiles={"Stała": DayProfile.parse("06:00/20")}, week=("Stała",) * 7)
+    await s.room().set_plan(flat)
+    await s.room().set_override(23, kind="until_next")
+    assert s.room().override.until is None
+    assert s.room().mode == "auto"
 
 
 async def test_temp_rule_uses_manual_then_back(

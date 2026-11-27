@@ -37,6 +37,9 @@ class FakeTrv:
     calls: list[tuple[str, str, dict]] = field(default_factory=list)
     lose_days: set[int] = field(default_factory=set)
     """Weekdays for which a write does not change the state (lost write)."""
+    schedule_temp: float | None = 18.0
+    """On entering schedule the setpoint becomes this value at once, and the
+    change source becomes "schedule" in a later report (as Zigbee2MQTT can do)."""
     source_on_write: bool = True
     """False: a setpoint write does not change the change source (late report)."""
     late_days: set[int] = field(default_factory=set)
@@ -110,7 +113,16 @@ def _register_services(hass: HomeAssistant, trvs: list[FakeTrv]) -> None:
             elif weekday not in trv.lose_days:
                 trv.set_day(weekday, call.data["value"])
         elif call.domain == "select":
+            old_mode = trv.hass.states.get(trv.mode_entity).state
             trv.set_mode(call.data["option"])
+            if (
+                call.data["option"] == "schedule"
+                and old_mode != "schedule"
+                and trv.schedule_temp is not None
+            ):
+                trv.set_setpoint(trv.schedule_temp)
+                # The source report comes after the setpoint report.
+                hass.loop.call_soon(trv.set_source, "schedule")
         elif call.domain == "climate":
             trv.set_setpoint(call.data[ATTR_TEMPERATURE])
             if trv.source_on_write:
