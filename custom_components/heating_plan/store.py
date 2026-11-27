@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import logging
 from typing import Any, TypedDict
 
 from homeassistant.core import HomeAssistant
@@ -12,6 +13,8 @@ from .const import DOMAIN
 from .model import DayProfile, Override, RoomPlan
 
 STORAGE_VERSION = 1
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class StoreData(TypedDict):
@@ -54,6 +57,17 @@ def _override_from_dict(data: dict[str, Any]) -> Override:
     )
 
 
+def _load_items[T](items: dict[str, Any], load: Any, what: str) -> dict[str, T]:
+    """Load each item. A bad item is skipped (a room then gets the default plan)."""
+    loaded: dict[str, T] = {}
+    for key, value in items.items():
+        try:
+            loaded[key] = load(value)
+        except (KeyError, TypeError, ValueError) as err:
+            _LOGGER.warning("The stored %s of room %s is not valid and is not used: %s", what, key, err)
+    return loaded
+
+
 class PlanStore:
     """Load and save the state of one config entry."""
 
@@ -66,10 +80,10 @@ class PlanStore:
         """Load the data. Missing data gives empty plans and overrides."""
         raw = await self._store.async_load() or {}
         return StoreData(
-            plans={k: _plan_from_dict(v) for k, v in raw.get("plans", {}).items()},
-            overrides={
-                k: _override_from_dict(v) for k, v in raw.get("overrides", {}).items()
-            },
+            plans=_load_items(raw.get("plans", {}), _plan_from_dict, "plan"),
+            overrides=_load_items(
+                raw.get("overrides", {}), _override_from_dict, "override"
+            ),
         )
 
     async def save(self, data: StoreData) -> None:

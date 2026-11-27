@@ -37,7 +37,8 @@
       "error": {
         "name_exists": "A room with this name already exists.",
         "name_empty": "Enter a room name.",
-        "trv_not_supported": "This thermostat has no weekly schedule entities. Zigbee2MQTT 2.14.3 or later and a Bosch BTH-RA are necessary."
+        "trv_not_supported": "This thermostat has no weekly schedule entities. Zigbee2MQTT 2.14.3 or later and a Bosch BTH-RA are necessary.",
+        "name_reserved": "This name is a profile name or \"wyłącz\". Calendar titles with it are not clear."
       },
       "abort": {
         "already_configured": "This thermostat is already used by a room."

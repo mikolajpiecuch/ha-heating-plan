@@ -35,8 +35,14 @@ class TrvError(Exception):
     """The thermostat entities cannot be found."""
 
 
-def _matches(unique_id: str, prop: str) -> bool:
-    return f"_{prop}_" in unique_id or unique_id.endswith(f"_{prop}")
+def _matches(unique_id: str, prop: str, *, exact: bool) -> bool:
+    """Zigbee2MQTT unique id: ``<ieee>_<property>_<base topic>``."""
+    if exact:
+        return unique_id.endswith(f"_{prop}_zigbee2mqtt")
+    # Another base topic, or no base topic.
+    return unique_id.endswith(f"_{prop}") or (
+        f"_{prop}_" in unique_id and "_" not in unique_id.rsplit(f"_{prop}_", 1)[1]
+    )
 
 
 def _state(hass: HomeAssistant, entity_id: str) -> str | None:
@@ -75,9 +81,12 @@ class BoschTrv:
         entries = er.async_entries_for_device(registry, climate.device_id)
 
         def find(domain: str, prop: str) -> str:
-            for entry in entries:
-                if entry.domain == domain and _matches(entry.unique_id, prop):
-                    return entry.entity_id
+            for exact in (True, False):
+                for entry in entries:
+                    if entry.domain == domain and _matches(
+                        entry.unique_id, prop, exact=exact
+                    ):
+                        return entry.entity_id
             raise TrvError(
                 f"The device of {climate_entity_id} has no {domain} entity "
                 f"for '{prop}'. Zigbee2MQTT 2.14.3 or later is necessary"

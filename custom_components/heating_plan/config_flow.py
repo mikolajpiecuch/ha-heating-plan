@@ -29,6 +29,7 @@ from .const import (
     CONF_OVERRIDE_HOURS,
     CONF_SENSOR_ENTITY_ID,
     DEFAULT_OVERRIDE_HOURS,
+    DEFAULT_PROFILES,
     DOMAIN,
     SUBENTRY_ROOM,
     Options,
@@ -36,6 +37,7 @@ from .const import (
 from .trv import BoschTrv, TrvError
 
 DEFAULT_NAME = "Dom"
+RESERVED_NAMES = {normalize(n) for n in (*DEFAULT_PROFILES, "wyłącz")}
 
 
 class HeatingPlanConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -89,11 +91,16 @@ class RoomSubentryFlow(ConfigSubentryFlow):
                 if subentry.unique_id == climate:
                     return self.async_abort(reason="already_configured")
             name = user_input[CONF_NAME].strip()
-            if not name or any(
+            if not name:
+                errors[CONF_NAME] = "name_empty"
+            elif normalize(name) in RESERVED_NAMES:
+                # The name must not make calendar titles unclear.
+                errors[CONF_NAME] = "name_reserved"
+            elif any(
                 normalize(s.title) == normalize(name)
                 for s in entry.subentries.values()
             ):
-                errors[CONF_NAME] = "name_exists" if name else "name_empty"
+                errors[CONF_NAME] = "name_exists"
             try:
                 BoschTrv.from_climate(self.hass, climate)
             except TrvError:

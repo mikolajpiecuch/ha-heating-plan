@@ -45,6 +45,32 @@ async def test_missing_entity_raises(hass: HomeAssistant, skip: str) -> None:
         BoschTrv.from_climate(hass, fake.climate)
 
 
+async def test_longer_property_is_not_matched(hass: HomeAssistant) -> None:
+    """A property that starts with the same text is not the entity."""
+    from homeassistant.helpers import entity_registry as er
+
+    [fake] = add_fake_trvs(hass, ["office"])
+    ent_reg = er.async_get(hass)
+    climate = ent_reg.async_get(fake.climate)
+    # Added before the real one; it must not win.
+    ent_reg.async_remove(fake.mode_entity)
+    other = ent_reg.async_get_or_create(
+        "select",
+        "mqtt",
+        "0x0000000000000000_operating_mode_extra_zigbee2mqtt",
+        device_id=climate.device_id,
+    )
+    real = ent_reg.async_get_or_create(
+        "select",
+        "mqtt",
+        "0x0000000000000000_operating_mode_zigbee2mqtt",
+        device_id=climate.device_id,
+    )
+    trv = BoschTrv.from_climate(hass, fake.climate)
+    assert trv.mode_entity_id == real.entity_id
+    assert trv.mode_entity_id != other.entity_id
+
+
 async def test_unknown_climate_raises(hass: HomeAssistant) -> None:
     with pytest.raises(TrvError):
         BoschTrv.from_climate(hass, "climate.nothing")

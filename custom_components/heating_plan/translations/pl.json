@@ -37,7 +37,8 @@
       "error": {
         "name_exists": "Pokój o tej nazwie już istnieje.",
         "name_empty": "Wpisz nazwę pokoju.",
-        "trv_not_supported": "Ta głowica nie ma encji planu tygodnia. Potrzebny jest Zigbee2MQTT 2.14.3 lub nowszy i Bosch BTH-RA."
+        "trv_not_supported": "Ta głowica nie ma encji planu tygodnia. Potrzebny jest Zigbee2MQTT 2.14.3 lub nowszy i Bosch BTH-RA.",
+        "name_reserved": "Ta nazwa jest nazwą profilu albo „wyłącz”. Tytuły w kalendarzu byłyby niejasne."
       },
       "abort": {
         "already_configured": "Ta głowica jest już przypisana do pokoju."

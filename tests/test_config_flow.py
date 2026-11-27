@@ -160,6 +160,20 @@ async def test_room_name_twice_is_an_error(hass: HomeAssistant) -> None:
     assert result["errors"] == {CONF_NAME: "name_exists"}
 
 
+async def test_reserved_room_name_is_an_error(hass: HomeAssistant) -> None:
+    [fake] = add_fake_trvs(hass, ["office"])
+    area = ar.async_get(hass).async_create("Office")
+    entry = await _setup_entry(hass)
+    for name in ("Wolne", "praca", "Wyłącz"):
+        result = await _add_room(
+            hass,
+            entry,
+            {CONF_NAME: name, CONF_AREA_ID: area.id, CONF_CLIMATE_ENTITY_ID: fake.climate},
+        )
+        assert result["type"] is FlowResultType.FORM
+        assert result["errors"] == {CONF_NAME: "name_reserved"}
+
+
 async def test_not_a_bosch_thermostat_is_an_error(hass: HomeAssistant) -> None:
     [fake] = add_fake_trvs(hass, ["office"], skip="weekly_schedule_monday")
     area = ar.async_get(hass).async_create("Office")
@@ -222,6 +236,26 @@ async def test_store_round_trip(hass: HomeAssistant, hass_storage: dict) -> None
         temp=23.5, until=until.astimezone(UTC), kind="timed", source="knob"
     )
     assert loaded["overrides"]["room2"] == data["overrides"]["room2"]
+
+
+async def test_store_skips_bad_items(hass: HomeAssistant, hass_storage: dict) -> None:
+    hass_storage[f"{DOMAIN}.entry1"] = {
+        "version": 1,
+        "key": f"{DOMAIN}.entry1",
+        "data": {
+            "plans": {
+                "good": {"profiles": {"A": "06:00/20"}, "week": ["A"] * 7},
+                "bad": {"profiles": {"A": ""}, "week": ["A"] * 7},
+            },
+            "overrides": {
+                "good": {"temp": 21, "until": None, "kind": "until_cancel", "source": "ha"},
+                "bad": {"temp": 21, "until": "not a time", "kind": "timed", "source": "ha"},
+            },
+        },
+    }
+    data = await PlanStore(hass, "entry1").load()
+    assert set(data["plans"]) == {"good"}
+    assert set(data["overrides"]) == {"good"}
 
 
 def test_default_plan() -> None:
