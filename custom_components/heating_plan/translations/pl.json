@@ -7,6 +7,55 @@
           "name": "Nazwa"
         }
       }
+    },
+    "abort": {
+      "single_instance_allowed": "Plan ogrzewania jest już skonfigurowany."
+    }
+  },
+  "config_subentries": {
+    "room": {
+      "initiate_flow": {
+        "user": "Dodaj pokój"
+      },
+      "entry_type": "Pokój",
+      "step": {
+        "user": {
+          "title": "Dodaj pokój",
+          "data": {
+            "name": "Nazwa pokoju",
+            "area_id": "Obszar",
+            "climate_entity_id": "Głowica (Bosch BTH-RA w Zigbee2MQTT)",
+            "sensor_entity_id": "Termometr pokojowy",
+            "override_hours": "Domyślny czas nadpisania"
+          },
+          "data_description": {
+            "name": "Tej nazwy używaj w wydarzeniach kalendarza, np. „Biuro 22”.",
+            "sensor_entity_id": "Opcjonalnie. Głowica użyje tej temperatury zamiast własnego czujnika."
+          }
+        }
+      },
+      "error": {
+        "name_exists": "Pokój o tej nazwie już istnieje.",
+        "name_empty": "Wpisz nazwę pokoju.",
+        "trv_not_supported": "Ta głowica nie ma encji planu tygodnia. Potrzebny jest Zigbee2MQTT 2.14.3 lub nowszy i Bosch BTH-RA.",
+        "name_reserved": "Ta nazwa jest nazwą profilu albo „wyłącz”. Tytuły w kalendarzu byłyby niejasne."
+      },
+      "abort": {
+        "already_configured": "Ta głowica jest już przypisana do pokoju."
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opcje planu ogrzewania",
+        "data": {
+          "calendar_entity_id": "Kalendarz z wyjątkami",
+          "holidays_enabled": "Uwzględniaj święta ustawowe",
+          "holiday_profile": "Profil na święta",
+          "min_temp": "Temperatura minimalna"
+        }
+      }
     }
   }
 }
