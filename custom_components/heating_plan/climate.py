@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from homeassistant.components.climate import (
+    ATTR_HVAC_MODE,
     ClimateEntity,
     ClimateEntityFeature,
     HVACMode,
@@ -62,10 +63,8 @@ class RoomClimate(RoomEntity, ClimateEntity):
         """The minimum target."""
         return self.room.home.options.min_temp
 
-    @property
-    def available(self) -> bool:
-        """The entity is available when the thermostat is."""
-        return self.room.trv.available
+    # The entity stays available when the thermostat is offline, so that the
+    # override can be seen and cancelled. The attribute sync_state shows "pending".
 
     @property
     def hvac_mode(self) -> HVACMode:
@@ -100,8 +99,14 @@ class RoomClimate(RoomEntity, ClimateEntity):
         }
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
-        """A new temperature: a timed override."""
-        await self.room.set_override(kwargs[ATTR_TEMPERATURE], "timed")
+        """A new temperature: a timed override (heat: until cancel, off: pause)."""
+        hvac_mode = kwargs.get(ATTR_HVAC_MODE)
+        if hvac_mode == HVACMode.OFF:
+            await self.room.set_override(None, "until_cancel")
+        elif hvac_mode == HVACMode.HEAT:
+            await self.room.set_override(kwargs[ATTR_TEMPERATURE], "until_cancel")
+        else:
+            await self.room.set_override(kwargs[ATTR_TEMPERATURE], "timed")
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Change the mode."""

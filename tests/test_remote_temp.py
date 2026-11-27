@@ -120,6 +120,18 @@ async def test_offline_thermostat_not_pushed(hass: HomeAssistant) -> None:
     assert pushed(s) == []
 
 
+async def test_pushes_at_once_on_reconnect(hass: HomeAssistant) -> None:
+    s = await setup_with_sensor(hass)
+    s.trvs[0].set_available(False)
+    await settle(hass)
+    set_temp(hass, "21.0")  # fresh, but the thermostat is offline
+    await settle(hass)
+    s.trvs[0].clear_calls()
+    s.trvs[0].set_available(True)
+    await settle(hass)
+    assert pushed(s) == [21.0]
+
+
 async def test_no_sensor_configured_noop(
     hass: HomeAssistant, freezer: FrozenDateTimeFactory
 ) -> None:

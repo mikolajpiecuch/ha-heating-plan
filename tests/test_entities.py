@@ -98,6 +98,44 @@ async def test_set_temperature_is_timed_override(hass: HomeAssistant) -> None:
     assert state.attributes["override_until"] == s.room().override.until.isoformat()
 
 
+async def test_set_temperature_with_hvac_mode(hass: HomeAssistant) -> None:
+    s = await setup(hass)
+    climate = entity_id(hass, s, "climate.climate")
+    await hass.services.async_call(
+        "climate",
+        "set_temperature",
+        {"entity_id": climate, "temperature": 22, "hvac_mode": HVACMode.HEAT},
+        blocking=True,
+    )
+    assert s.room().override == Override(22, None, "until_cancel", "ha")
+    await hass.services.async_call(
+        "climate",
+        "set_temperature",
+        {"entity_id": climate, "temperature": 22, "hvac_mode": HVACMode.OFF},
+        blocking=True,
+    )
+    assert s.room().override == Override(None, None, "until_cancel", "ha")
+
+
+async def test_climate_stays_available_when_thermostat_is_offline(
+    hass: HomeAssistant,
+) -> None:
+    s = await setup(hass)
+    await s.room().set_override(23, kind="until_cancel")
+    s.trvs[0].set_available(False)
+    await settle(hass)
+    state = hass.states.get(entity_id(hass, s, "climate.climate"))
+    assert state.state == HVACMode.HEAT
+    assert state.attributes["sync_state"] == "pending"
+    await hass.services.async_call(
+        "climate",
+        "set_hvac_mode",
+        {"entity_id": state.entity_id, "hvac_mode": HVACMode.AUTO},
+        blocking=True,
+    )
+    assert s.room().override is None
+
+
 async def test_hvac_modes(hass: HomeAssistant) -> None:
     s = await setup(hass)
     climate = entity_id(hass, s, "climate.climate")

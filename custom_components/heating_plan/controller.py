@@ -344,6 +344,8 @@ class RoomController:
         is_online = new is not None and new.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN)
         if is_online and not was_online:
             self.request_sync(force=True)
+            # The thermostat uses its own sensor again 30 min after the last value.
+            self._push_remote_temp(force=True)
         elif was_online and not is_online:
             self.sync_state = "pending"
             self._notify()
