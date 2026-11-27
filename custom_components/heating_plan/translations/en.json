@@ -1,0 +1,12 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Heating Plan",
+        "data": {
+          "name": "Name"
+        }
+      }
+    }
+  }
+}
